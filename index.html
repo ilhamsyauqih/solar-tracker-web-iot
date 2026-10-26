@@ -1,0 +1,572 @@
+<!DOCTYPE html>
+<html lang="id">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Solar Tracker Monitor & Kontrol</title>
+  <style>
+    :root {
+      --bg: #f4f7f5;
+      --card: #ffffff;
+      --text: #14231a;
+      --muted: #5d6f64;
+      --line: #dbe5de;
+      --accent: #1e8449;
+      --warn: #d68910;
+      --bad: #c0392b;
+      --btn: #eef4f0;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0f1713;
+        --card: #17221c;
+        --text: #e6f0ea;
+        --muted: #8fa399;
+        --line: #26362d;
+        --accent: #3ddc84;
+        --warn: #f5b041;
+        --bad: #ec7063;
+        --btn: #1f2e26;
+      }
+    }
+
+    * {
+      box-sizing: border-box;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+    }
+
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 16px 20px;
+      flex-wrap: wrap;
+      gap: 8px;
+      max-width: 1100px;
+      margin: auto;
+    }
+
+    h1 {
+      font-size: 1.25rem;
+      margin: 0;
+    }
+
+    .badges {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .badge {
+      padding: 6px 12px;
+      border-radius: 999px;
+      font-size: .85rem;
+      font-weight: 600;
+      background: var(--line);
+      color: var(--muted);
+    }
+
+    .badge.on {
+      background: var(--accent);
+      color: #fff;
+    }
+
+    .badge.off {
+      background: var(--bad);
+      color: #fff;
+    }
+
+    .badge.man {
+      background: var(--warn);
+      color: #fff;
+    }
+
+    main {
+      padding: 0 20px 24px;
+      display: grid;
+      gap: 14px;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      max-width: 1100px;
+      margin: auto;
+    }
+
+    .card {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 16px;
+    }
+
+    .card h2 {
+      margin: 0 0 8px;
+      font-size: .8rem;
+      font-weight: 600;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: .04em;
+    }
+
+    .big {
+      font-size: 2rem;
+      font-weight: 700;
+    }
+
+    .unit {
+      font-size: 1rem;
+      color: var(--muted);
+      margin-left: 4px;
+    }
+
+    .sub {
+      color: var(--muted);
+      font-size: .85rem;
+      margin-top: 4px;
+    }
+
+    .wide {
+      grid-column: 1 / -1;
+    }
+
+    .ldr-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+
+    .ldr {
+      background: var(--bg);
+      border-radius: 10px;
+      padding: 10px;
+    }
+
+    .ldr b {
+      display: block;
+      font-size: .75rem;
+      color: var(--muted);
+    }
+
+    .bar {
+      height: 8px;
+      border-radius: 4px;
+      background: var(--line);
+      margin-top: 6px;
+      overflow: hidden;
+    }
+
+    .bar i {
+      display: block;
+      height: 100%;
+      width: 0;
+      background: var(--accent);
+      transition: width .4s;
+    }
+
+    canvas#chart {
+      width: 100% !important;
+      max-height: 260px;
+    }
+
+    /* ---------- panel kontrol ---------- */
+    .modes {
+      display: inline-flex;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      overflow: hidden;
+    }
+
+    .modes button {
+      border: 0;
+      background: var(--btn);
+      color: var(--text);
+      padding: 10px 22px;
+      font-size: .95rem;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    .modes button.active {
+      background: var(--accent);
+      color: #fff;
+    }
+
+    .ctrl-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 28px;
+      align-items: center;
+      justify-content: center;
+      margin-top: 16px;
+    }
+
+    .ctrl-row.dis {
+      opacity: .4;
+      pointer-events: none;
+    }
+
+    #pad {
+      width: 170px;
+      height: 170px;
+      border-radius: 50%;
+      background: var(--bg);
+      border: 2px solid var(--line);
+      position: relative;
+      touch-action: none;
+      cursor: grab;
+    }
+
+    #pad::before,
+    #pad::after {
+      content: "";
+      position: absolute;
+      background: var(--line);
+    }
+
+    #pad::before {
+      left: 50%;
+      top: 8%;
+      width: 1px;
+      height: 84%;
+    }
+
+    #pad::after {
+      top: 50%;
+      left: 8%;
+      height: 1px;
+      width: 84%;
+    }
+
+    #knob {
+      width: 60px;
+      height: 60px;
+      border-radius: 50%;
+      background: var(--accent);
+      position: absolute;
+      left: 55px;
+      top: 55px;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, .3);
+    }
+
+    .dpad {
+      display: grid;
+      grid-template-columns: repeat(3, 56px);
+      grid-template-rows: repeat(3, 56px);
+      gap: 6px;
+    }
+
+    .dpad button {
+      border: 1px solid var(--line);
+      background: var(--btn);
+      color: var(--text);
+      border-radius: 12px;
+      font-size: 1.4rem;
+      cursor: pointer;
+      touch-action: none;
+      user-select: none;
+    }
+
+    .dpad button:active {
+      background: var(--accent);
+      color: #fff;
+    }
+
+    .opts {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      font-size: .9rem;
+    }
+
+    .opts select {
+      padding: 6px;
+      border-radius: 8px;
+      border: 1px solid var(--line);
+      background: var(--btn);
+      color: var(--text);
+    }
+
+    .opts label {
+      display: flex;
+      gap: 6px;
+      align-items: center;
+    }
+
+    .opts button {
+      padding: 8px 12px;
+      border-radius: 10px;
+      border: 1px solid var(--line);
+      background: var(--btn);
+      color: var(--text);
+      cursor: pointer;
+    }
+
+    .readout {
+      text-align: center;
+      margin-top: 12px;
+      font-size: .95rem;
+    }
+
+    .hint {
+      text-align: center;
+      color: var(--muted);
+      font-size: .8rem;
+      margin-top: 6px;
+    }
+  </style>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+</head>
+
+<body>
+  <header>
+    <h1>☀️ Solar Tracker – Monitor & Kontrol</h1>
+    <div class="badges"><span id="modeBadge" class="badge">Mode –</span><span id="status" class="badge">Menunggu
+        data…</span></div>
+  </header>
+  <main>
+    <div class="card">
+      <h2>Cahaya Rata-rata</h2>
+      <div><span class="big" id="light">–</span><span class="unit">%</span></div>
+      <div class="bar"><i id="b_light"></i></div>
+      <div class="sub">Rata-rata 4 sensor LDR</div>
+    </div>
+    <div class="card">
+      <h2>Status Tracking</h2>
+      <div class="big" id="status2" style="font-size:1.3rem">–</div>
+      <div class="sub" id="diff">Selisih atas-bawah – | kiri-kanan –</div>
+    </div>
+    <div class="card">
+      <h2>Posisi Servo (aktual)</h2>
+      <div class="sub">Pan (horizontal)</div>
+      <div><span class="big" id="az">–</span><span class="unit">°</span></div>
+      <div class="sub">Tilt (vertikal)</div>
+      <div><span class="big" id="el">–</span><span class="unit">°</span></div>
+    </div>
+    <div class="card">
+      <h2>Koneksi</h2>
+      <div><span class="big" id="rssi">–</span><span class="unit">dBm</span></div>
+      <div class="sub" id="uptime">Uptime –</div>
+      <div class="sub" id="last">Update terakhir –</div>
+    </div>
+
+    <div class="card wide">
+      <h2>Kontrol Servo Realtime</h2>
+      <div style="text-align:center">
+        <div class="modes"><button id="btnAuto" class="active">AUTO (ikuti cahaya)</button><button id="btnManual">MANUAL
+            (kontrol web)</button></div>
+      </div>
+      <div id="ctrlRow" class="ctrl-row dis">
+        <div>
+          <div id="pad">
+            <div id="knob"></div>
+          </div>
+          <div class="hint">Geser joystick</div>
+        </div>
+        <div>
+          <div class="dpad">
+            <span></span><button data-d="up" aria-label="Atas">▲</button><span></span>
+            <button data-d="left" aria-label="Kiri">◀</button><button id="btnCenter" aria-label="Tengah"
+              style="font-size:.8rem">⌖<br>tengah</button><button data-d="right" aria-label="Kanan">▶</button>
+            <span></span><button data-d="down" aria-label="Bawah">▼</button><span></span>
+          </div>
+          <div class="hint">Tombol panah / keyboard ← ↑ → ↓</div>
+        </div>
+        <div class="opts">
+          <label>Langkah <select id="step">
+              <option value="1">1°</option>
+              <option value="2" selected>2°</option>
+              <option value="5">5°</option>
+              <option value="10">10°</option>
+            </select></label>
+          <label><input type="checkbox" id="invPan"> Balik arah PAN</label>
+          <label><input type="checkbox" id="invTilt"> Balik arah TILT</label>
+        </div>
+      </div>
+      <div class="readout" id="readout">Mode AUTO: servo mengikuti cahaya. Pilih MANUAL untuk mengontrol dari sini.
+      </div>
+    </div>
+
+    <div class="card wide">
+      <h2>Intensitas Cahaya (nilai ADC 0–4095)</h2>
+      <div class="ldr-grid">
+        <div class="ldr"><b>Kiri-Atas (TL)</b><span id="tl">–</span>
+          <div class="bar"><i id="b_tl"></i></div>
+        </div>
+        <div class="ldr"><b>Kanan-Atas (TR)</b><span id="tr">–</span>
+          <div class="bar"><i id="b_tr"></i></div>
+        </div>
+        <div class="ldr"><b>Kiri-Bawah (BL)</b><span id="bl">–</span>
+          <div class="bar"><i id="b_bl"></i></div>
+        </div>
+        <div class="ldr"><b>Kanan-Bawah (BR)</b><span id="br">–</span>
+          <div class="bar"><i id="b_br"></i></div>
+        </div>
+      </div>
+    </div>
+    <div class="card wide">
+      <h2>Grafik Cahaya Rata-rata (%) – 40 data terakhir</h2><canvas id="chart"></canvas>
+    </div>
+  </main>
+
+  <script type="module">
+    import {initializeApp} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+    import {getDatabase, ref, onValue, update} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
+
+    // ====== GANTI DENGAN firebaseConfig MILIK ANDA (Firebase Console > Project settings > Your apps) ======
+    const firebaseConfig = {
+      apiKey: "AIzaSyAhNppq1ukSenjSYBfOEaz54s0Q1TDgfOM",
+      authDomain: "solar-tracker-e7605.firebaseapp.com",
+      databaseURL: "https://solar-tracker-e7605-default-rtdb.asia-southeast1.firebasedatabase.app",
+      projectId: "solar-tracker-e7605",
+      storageBucket: "solar-tracker-e7605.firebasestorage.app",
+      messagingSenderId: "897337212981",
+      appId: "1:897337212981:web:53a1fee3f02810a725b17c",
+      measurementId: "G-S9HKYDM143"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const db = getDatabase(app);
+    const $ = (id) => document.getElementById(id);
+    const ctrlRef = ref(db, "solar/control");
+
+    // batas sudut (samakan dengan AZ_MIN/MAX dan EL_MIN/MAX di kode ESP32)
+    const AZ_MIN = 0, AZ_MAX = 180, EL_MIN = 0, EL_MAX = 90;
+    const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+
+    // ---------- status kontrol ----------
+    let mode = "auto";            // mode yang diinginkan (dikirim ke Firebase)
+    let tAz = 90, tEl = 45;       // sudut target (derajat)
+    let live = null, lastTs = 0, dirty = false, lastSent = 0;
+
+    try {$("invPan").checked = localStorage.getItem("invPan") === "1"; $("invTilt").checked = localStorage.getItem("invTilt") === "1";} catch (e) { }
+    $("invPan").onchange = () => {try {localStorage.setItem("invPan", $("invPan").checked ? "1" : "0");} catch (e) { } };
+    $("invTilt").onchange = () => {try {localStorage.setItem("invTilt", $("invTilt").checked ? "1" : "0");} catch (e) { } };
+
+    function renderControl() {
+      const manual = mode === "manual";
+      $("btnAuto").classList.toggle("active", !manual);
+      $("btnManual").classList.toggle("active", manual);
+      $("ctrlRow").classList.toggle("dis", !manual);
+      const act = live ? `Aktual: PAN ${live.servo.az}° / TILT ${live.servo.el}°` : "Aktual: –";
+      $("readout").textContent = manual
+        ? `Target: PAN ${Math.round(tAz)}° / TILT ${Math.round(tEl)}°   |   ${act}`
+        : "Mode AUTO: servo mengikuti cahaya. Pilih MANUAL untuk mengontrol dari sini.";
+    }
+
+    function pushControl(force) {
+      const now = Date.now();
+      if (!force && (!dirty || now - lastSent < 100)) return;   // batasi maks 10 kirim/detik
+      dirty = false; lastSent = now;
+      update(ctrlRef, {mode, az: Math.round(tAz), el: Math.round(tEl)}).catch((e) => console.error("Gagal kirim kontrol:", e));
+    }
+    setInterval(() => pushControl(false), 60);
+
+    function setMode(m) {
+      if (m === "manual" && live) {tAz = live.servo.az; tEl = live.servo.el;}   // mulai dari posisi sekarang
+      mode = m; renderControl(); pushControl(true);
+    }
+    $("btnAuto").onclick = () => setMode("auto");
+    $("btnManual").onclick = () => setMode("manual");
+
+    function nudge(dx, dy) {            // dx: + = kanan, dy: + = atas (dalam derajat)
+      if (mode !== "manual") return;
+      const sp = $("invPan").checked ? -1 : 1, st = $("invTilt").checked ? -1 : 1;
+      tAz = clamp(tAz + dx * sp, AZ_MIN, AZ_MAX);
+      tEl = clamp(tEl + dy * st, EL_MIN, EL_MAX);
+      dirty = true; renderControl();
+    }
+    const stepDeg = () => Number($("step").value);
+
+    // ---------- tombol panah (tahan = berulang) ----------
+    const dirs = {up: [0, 1], down: [0, -1], left: [-1, 0], right: [1, 0]};
+    document.querySelectorAll(".dpad button[data-d]").forEach((b) => {
+      let timer = null;
+      const stop = () => {clearInterval(timer); timer = null;};
+      b.addEventListener("pointerdown", (e) => {
+        e.preventDefault(); const [dx, dy] = dirs[b.dataset.d];
+        nudge(dx * stepDeg(), dy * stepDeg());
+        stop(); timer = setInterval(() => nudge(dx * stepDeg(), dy * stepDeg()), 120);
+      });
+      ["pointerup", "pointerleave", "pointercancel"].forEach((ev) => b.addEventListener(ev, stop));
+    });
+    $("btnCenter").onclick = () => {if (mode !== "manual") return; tAz = 90; tEl = 45; dirty = true; renderControl();};
+
+    window.addEventListener("keydown", (e) => {
+      const k = {ArrowUp: "up", ArrowDown: "down", ArrowLeft: "left", ArrowRight: "right"}[e.key];
+      if (!k || mode !== "manual" || /INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName)) return;
+      e.preventDefault(); const [dx, dy] = dirs[k]; nudge(dx * stepDeg(), dy * stepDeg());
+    });
+
+    // ---------- joystick virtual ----------
+    const pad = $("pad"), knob = $("knob");
+    let jx = 0, jy = 0, dragging = false;
+    function moveKnob(ev) {
+      const r = pad.getBoundingClientRect(), R = r.width / 2 - 30;
+      let x = ev.clientX - (r.left + r.width / 2), y = ev.clientY - (r.top + r.height / 2);
+      const d = Math.hypot(x, y); if (d > R) {x *= R / d; y *= R / d;}
+      knob.style.left = (r.width / 2 - 30 + x) + "px"; knob.style.top = (r.height / 2 - 30 + y) + "px";
+      jx = x / R; jy = -y / R;                     // jy positif = ke atas
+    }
+    pad.addEventListener("pointerdown", (e) => {dragging = true; pad.setPointerCapture(e.pointerId); moveKnob(e);});
+    pad.addEventListener("pointermove", (e) => {if (dragging) moveKnob(e);});
+    const release = () => {dragging = false; jx = jy = 0; knob.style.left = "55px"; knob.style.top = "55px";};
+    pad.addEventListener("pointerup", release); pad.addEventListener("pointercancel", release);
+    setInterval(() => {                             // makin jauh digeser, makin cepat
+      if (!dragging || (Math.abs(jx) < 0.15 && Math.abs(jy) < 0.15)) return;
+      nudge(jx * stepDeg(), jy * stepDeg());
+    }, 100);
+
+    // ---------- sinkron mode dari Firebase (jika dibuka di perangkat lain) ----------
+    let firstCtrl = true;
+    onValue(ctrlRef, (snap) => {
+      const v = snap.val(); if (!v) {renderControl(); return;}
+      if (firstCtrl) {if (typeof v.az === "number") tAz = v.az; if (typeof v.el === "number") tEl = v.el; firstCtrl = false;}
+      if (v.mode && v.mode !== mode && Date.now() - lastSent > 800) {mode = v.mode; if (mode === "manual" && typeof v.az === "number") {tAz = v.az; tEl = v.el;} }
+      renderControl();
+    });
+
+    // ---------- data live dari ESP32 ----------
+    const chart = new Chart($("chart"), {
+      type: "line",
+      data: {labels: [], datasets: [{label: "Cahaya (%)", data: [], borderColor: "#1e8449", backgroundColor: "rgba(30,132,73,.15)", fill: true, tension: .3, pointRadius: 2}]},
+      options: {animation: false, scales: {y: {beginAtZero: true, max: 100}}, plugins: {legend: {display: false}}}
+    });
+    const fmtUptime = (s) => `${Math.floor(s / 3600)}j ${Math.floor(s % 3600 / 60)}m ${s % 60}d`;
+
+    onValue(ref(db, "solar/live"), (snap) => {
+      const d = snap.val(); if (!d) return;
+      live = d; lastTs = d.ts || Date.now();
+      $("light").textContent = d.light; $("b_light").style.width = d.light + "%";
+      $("status2").textContent = d.status;
+      $("status2").style.color = d.status === "Seimbang" ? "var(--accent)" : "var(--warn)";
+      $("diff").textContent = `Selisih atas-bawah ${d.dv} | kiri-kanan ${d.dh}`;
+      $("az").textContent = d.servo.az; $("el").textContent = d.servo.el;
+      $("rssi").textContent = d.rssi; $("uptime").textContent = "Uptime " + fmtUptime(d.uptime);
+      $("last").textContent = "Update terakhir " + new Date(lastTs).toLocaleTimeString("id-ID");
+      for (const k of ["tl", "tr", "bl", "br"]) {$(k).textContent = d.ldr[k]; $("b_" + k).style.width = (d.ldr[k] / 4095 * 100) + "%";}
+      $("modeBadge").textContent = "Mode " + (d.mode === "manual" ? "MANUAL" : "AUTO");
+      $("modeBadge").className = "badge " + (d.mode === "manual" ? "man" : "on");
+      renderControl();
+      chart.data.labels.push(new Date(lastTs).toLocaleTimeString("id-ID"));
+      chart.data.datasets[0].data.push(d.light);
+      if (chart.data.labels.length > 40) {chart.data.labels.shift(); chart.data.datasets[0].data.shift();}
+      chart.update();
+    });
+
+    setInterval(() => {
+      const online = lastTs && (Date.now() - lastTs) < 20000;
+      $("status").textContent = lastTs ? (online ? "ONLINE" : "OFFLINE") : "Menunggu data…";
+      $("status").className = "badge " + (lastTs ? (online ? "on" : "off") : "");
+    }, 2000);
+    renderControl();
+  </script>
+</body>
+
+</html>
