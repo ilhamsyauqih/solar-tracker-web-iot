@@ -47,6 +47,14 @@
   .opts label { display:flex; gap:6px; align-items:center; }
   .opts button { padding:8px 12px; border-radius:10px; border:1px solid var(--line); background:var(--btn); color:var(--text); cursor:pointer; }
   .readout { text-align:center; margin-top:12px; font-size:.95rem; }
+  .hctl { display:flex; flex-wrap:wrap; gap:12px; align-items:center; margin-bottom:12px; font-size:.9rem; }
+  .hctl select, .hctl button { padding:7px 10px; border-radius:10px; border:1px solid var(--line); background:var(--btn); color:var(--text); cursor:pointer; font-size:.9rem; }
+  .hctl button.danger { color:var(--bad); }
+  .hstats { display:grid; grid-template-columns:repeat(auto-fit,minmax(130px,1fr)); gap:10px; margin:12px 0; }
+  .hstats div { background:var(--bg); border-radius:10px; padding:10px; } .hstats b { display:block; font-size:1.15rem; } .hstats span { font-size:.72rem; color:var(--muted); }
+  .tscroll { overflow-x:auto; } table.h { width:100%; border-collapse:collapse; font-size:.82rem; }
+  table.h th, table.h td { padding:6px 8px; border-bottom:1px solid var(--line); text-align:right; white-space:nowrap; } table.h th:first-child, table.h td:first-child { text-align:left; }
+  table.h th { color:var(--muted); font-weight:600; }
   .pgrid { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:16px; }
   .hint { text-align:center; color:var(--muted); font-size:.8rem; margin-top:6px; }
 </style>
@@ -105,11 +113,33 @@
     </div>
   </div>
   <div class="card wide"><h2>Grafik Cahaya (%) dan Estimasi Daya (W) – 40 data terakhir</h2><canvas id="chart"></canvas></div>
+
+  <div class="card wide">
+    <h2>Riwayat Pengukuran (tersimpan di Firebase)</h2>
+    <div class="hctl">
+      <label><input type="checkbox" id="autoSave" checked> Simpan otomatis</label>
+      <label>Setiap <select id="saveEvery"><option value="10">10 detik</option><option value="30" selected>30 detik</option><option value="60">1 menit</option><option value="300">5 menit</option></select></label>
+      <label>Tampilkan <select id="range"><option value="1">1 jam terakhir</option><option value="6">6 jam terakhir</option><option value="24" selected>24 jam terakhir</option><option value="168">7 hari terakhir</option></select></label>
+      <button id="btnCsv">⬇ Unduh CSV</button>
+      <button id="btnClear" class="danger">🗑 Hapus semua riwayat</button>
+    </div>
+    <div class="sub" id="histStatus">Riwayat disimpan selama halaman ini terbuka dan data ESP32 masuk.</div>
+    <div class="hstats">
+      <div><b id="hCount">–</b><span>Jumlah data</span></div>
+      <div><b id="hLight">–</b><span>Cahaya rata-rata (%)</span></div>
+      <div><b id="hAvgP">–</b><span>Daya estimasi rata-rata (W)</span></div>
+      <div><b id="hMaxP">–</b><span>Daya estimasi tertinggi (W)</span></div>
+      <div><b id="hEnergy">–</b><span>Energi estimasi (Wh)</span></div>
+    </div>
+    <canvas id="histChart" style="max-height:260px"></canvas>
+    <h2 style="margin-top:16px">20 data terbaru</h2>
+    <div class="tscroll"><table class="h"><thead><tr><th>Waktu</th><th>Cahaya %</th><th>Daya W</th><th>Selaras %</th><th>PAN°</th><th>TILT°</th><th>Mode</th><th>Status</th></tr></thead><tbody id="histBody"><tr><td colspan="8">Belum ada data riwayat.</td></tr></tbody></table></div>
+  </div>
 </main>
 
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-  import { getDatabase, ref, onValue, update } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
+  import { getDatabase, ref, onValue, update, set, remove, query, orderByKey, startAt, limitToLast } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
 
   // ====== GANTI DENGAN firebaseConfig MILIK ANDA (Firebase Console > Project settings > Your apps) ======
   const firebaseConfig = {
@@ -283,6 +313,7 @@
   onValue(ref(db, "solar/live"), (snap) => {
     const d = snap.val(); if (!d) return;
     live = d; lastTs = d.ts || Date.now();
+    maybeSave(d);
     $("light").textContent = d.light; $("b_light").style.width = d.light + "%";
     if (typeof d.pest === "number") {
       $("pest").textContent = d.pest.toFixed(2); $("pmax").textContent = "dari puncak " + d.wp + " W";
@@ -306,6 +337,112 @@
     if (chart.data.labels.length > 40) { chart.data.labels.shift(); chart.data.datasets.forEach((ds) => ds.data.shift()); }
     chart.update();
   });
+
+  // ================== RIWAYAT PENGUKURAN (Firebase: solar/history) ==================
+  // Catatan: riwayat ditulis oleh website ini saat terbuka (ESP32 tidak diubah).
+  // Kunci data = waktu server dibulatkan ke interval simpan, jadi beberapa perangkat yang membuka
+  // dashboard bersamaan tidak membuat data ganda.
+  const numOrNull = (v) => (typeof v === "number" && isFinite(v) ? v : null);
+  let lastBucket = 0;
+  try {
+    $("autoSave").checked = localStorage.getItem("autoSave") !== "0";
+    const ev = localStorage.getItem("saveEvery"); if (ev) $("saveEvery").value = ev;
+    const rg = localStorage.getItem("histRange"); if (rg) $("range").value = rg;
+  } catch (e) {}
+  $("autoSave").onchange = () => { try { localStorage.setItem("autoSave", $("autoSave").checked ? "1" : "0"); } catch (e) {} };
+  $("saveEvery").onchange = () => { lastBucket = 0; try { localStorage.setItem("saveEvery", $("saveEvery").value); } catch (e) {} };
+
+  function maybeSave(d) {
+    if (!$("autoSave").checked || typeof d.ts !== "number") return;
+    const every = Number($("saveEvery").value) * 1000;
+    const bucket = Math.floor(d.ts / every) * every;
+    if (bucket === lastBucket) return;
+    lastBucket = bucket;
+    const rec = {
+      ts: d.ts, light: numOrNull(d.light), align: numOrNull(d.align), pest: numOrNull(d.pest), ewh: numOrNull(d.ewh),
+      az: numOrNull(d.servo && d.servo.az), el: numOrNull(d.servo && d.servo.el),
+      mode: String(d.mode || ""), status: String(d.status || ""),
+      tl: numOrNull(d.ldr && d.ldr.tl), tr: numOrNull(d.ldr && d.ldr.tr), bl: numOrNull(d.ldr && d.ldr.bl), br: numOrNull(d.ldr && d.ldr.br),
+      rssi: numOrNull(d.rssi)
+    };
+    set(ref(db, "solar/history/" + bucket), rec)
+      .then(() => { $("histStatus").textContent = "Tersimpan: " + new Date(d.ts).toLocaleString("id-ID"); })
+      .catch((e) => { $("histStatus").textContent = "Gagal menyimpan riwayat: " + e.message; });
+  }
+
+  let histRecords = [], unsubHist = null;
+  const histChart = new Chart($("histChart"), {
+    type: "line",
+    data: { labels: [], datasets: [
+      { label: "Cahaya (%)", data: [], borderColor: "#1e8449", backgroundColor: "rgba(30,132,73,.12)", fill: true, tension: .25, pointRadius: 0, yAxisID: "y" },
+      { label: "Daya estimasi (W)", data: [], borderColor: "#d68910", tension: .25, pointRadius: 0, yAxisID: "y1" }
+    ] },
+    options: { animation: false, interaction: { mode: "index", intersect: false },
+      scales: { y: { beginAtZero: true, max: 100, title: { display: true, text: "Cahaya (%)" } },
+                y1: { beginAtZero: true, position: "right", grid: { drawOnChartArea: false }, title: { display: true, text: "Daya estimasi (W)" } } },
+      plugins: { legend: { display: true } } }
+  });
+
+  function subscribeHistory() {
+    if (unsubHist) unsubHist();
+    const hours = Number($("range").value);
+    const from = Date.now() - hours * 3600e3;
+    const q = query(ref(db, "solar/history"), orderByKey(), startAt(String(from)), limitToLast(1500));
+    unsubHist = onValue(q, (snap) => {
+      const arr = [];
+      snap.forEach((ch) => { const v = ch.val(); if (v && typeof v.ts === "number") arr.push(v); });
+      arr.sort((a, b) => a.ts - b.ts);
+      histRecords = arr; renderHistory();
+    }, (err) => { $("histStatus").textContent = "Gagal membaca riwayat: " + err.message; });
+  }
+  $("range").onchange = () => { try { localStorage.setItem("histRange", $("range").value); } catch (e) {} subscribeHistory(); };
+
+  const f1 = (v, n = 1) => (typeof v === "number" ? v.toFixed(n) : "–");
+  function renderHistory() {
+    const r = histRecords, n = r.length;
+    $("hCount").textContent = n;
+    if (!n) {
+      ["hLight", "hAvgP", "hMaxP", "hEnergy"].forEach((id) => ($(id).textContent = "–"));
+      $("histBody").innerHTML = '<tr><td colspan="8">Belum ada data riwayat pada rentang ini.</td></tr>';
+      histChart.data.labels = []; histChart.data.datasets.forEach((ds) => (ds.data = [])); histChart.update(); return;
+    }
+    const mean = (k) => { const v = r.map((x) => x[k]).filter((x) => typeof x === "number"); return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null; };
+    $("hLight").textContent = f1(mean("light")); $("hAvgP").textContent = f1(mean("pest"), 2);
+    $("hMaxP").textContent = f1(Math.max(...r.map((x) => (typeof x.pest === "number" ? x.pest : 0))), 2);
+    // energi = integrasi daya estimasi terhadap waktu (celah > 10 menit tidak dihitung)
+    let wh = 0;
+    for (let i = 1; i < n; i++) {
+      const dt = r[i].ts - r[i - 1].ts;
+      if (dt > 0 && dt <= 600000 && typeof r[i - 1].pest === "number") wh += r[i - 1].pest * dt / 3600000;
+    }
+    $("hEnergy").textContent = wh.toFixed(3);
+
+    const long = Number($("range").value) > 24;
+    const fmt = (t) => new Date(t).toLocaleString("id-ID", long ? { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" } : { hour: "2-digit", minute: "2-digit" });
+    const k = Math.ceil(n / 400);                                    // kurangi titik agar grafik ringan
+    const pts = r.filter((_, i) => i % k === 0);
+    histChart.data.labels = pts.map((x) => fmt(x.ts));
+    histChart.data.datasets[0].data = pts.map((x) => x.light);
+    histChart.data.datasets[1].data = pts.map((x) => x.pest);
+    histChart.update();
+
+    $("histBody").innerHTML = r.slice(-20).reverse().map((x) =>
+      `<tr><td>${new Date(x.ts).toLocaleString("id-ID")}</td><td>${f1(x.light, 0)}</td><td>${f1(x.pest, 2)}</td><td>${f1(x.align, 0)}</td><td>${f1(x.az, 0)}</td><td>${f1(x.el, 0)}</td><td>${x.mode || "–"}</td><td>${x.status || "–"}</td></tr>`).join("");
+  }
+
+  $("btnCsv").onclick = () => {
+    if (!histRecords.length) { alert("Belum ada data untuk diunduh."); return; }
+    const cols = ["ts", "waktu", "light", "align", "pest", "ewh", "az", "el", "mode", "status", "tl", "tr", "bl", "br", "rssi"];
+    const rows = histRecords.map((x) => cols.map((c) => (c === "waktu" ? new Date(x.ts).toISOString() : (x[c] ?? ""))).join(","));
+    const blob = new Blob([cols.join(",") + "\n" + rows.join("\n")], { type: "text/csv" });
+    const a = document.createElement("a"); a.href = URL.createObjectURL(blob);
+    a.download = "riwayat_solar_tracker.csv"; document.body.appendChild(a); a.click(); a.remove();
+  };
+  $("btnClear").onclick = () => {
+    if (!confirm("Hapus SEMUA riwayat pengukuran di Firebase?\nTindakan ini tidak dapat dibatalkan.")) return;
+    remove(ref(db, "solar/history")).then(() => { $("histStatus").textContent = "Riwayat dihapus."; }).catch((e) => alert("Gagal menghapus: " + e.message));
+  };
+  subscribeHistory();
 
   setInterval(() => {
     const online = lastTs && (Date.now() - lastTs) < 20000;
