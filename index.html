@@ -55,6 +55,10 @@
   .tscroll { overflow-x:auto; } table.h { width:100%; border-collapse:collapse; font-size:.82rem; }
   table.h th, table.h td { padding:6px 8px; border-bottom:1px solid var(--line); text-align:right; white-space:nowrap; } table.h th:first-child, table.h td:first-child { text-align:left; }
   table.h th { color:var(--muted); font-weight:600; }
+  .cal { display:flex; flex-wrap:wrap; gap:10px; align-items:center; justify-content:center; margin-top:12px; font-size:.9rem; }
+  .cal input { width:90px; padding:7px 10px; border-radius:10px; border:1px solid var(--line); background:var(--btn); color:var(--text); font-size:.9rem; }
+  .cal button { padding:7px 12px; border-radius:10px; border:1px solid var(--line); background:var(--btn); color:var(--text); cursor:pointer; font-size:.9rem; }
+  .cal button.primary { background:var(--accent); color:#fff; border-color:var(--accent); }
   .pgrid { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:16px; }
   .hint { text-align:center; color:var(--muted); font-size:.8rem; margin-top:6px; }
 </style>
@@ -72,13 +76,20 @@
   <div class="card"><h2>Koneksi</h2><div><span class="big" id="rssi">–</span><span class="unit">dBm</span></div><div class="sub" id="uptime">Uptime –</div><div class="sub" id="last">Update terakhir –</div></div>
 
   <div class="card wide">
-    <h2>Estimasi Daya Masuk dari Panel Surya</h2>
+    <h2 id="powTitle">Estimasi Daya Masuk dari Panel Surya</h2>
     <div class="pgrid">
       <div><div class="sub">Daya estimasi</div><div><span class="big" id="pest">–</span><span class="unit">W</span></div><div class="bar"><i id="b_pest"></i></div><div class="sub" id="pmax">dari puncak – W</div></div>
       <div><div class="sub">Keselarasan panel</div><div><span class="big" id="align">–</span><span class="unit">%</span></div><div class="bar"><i id="b_align"></i></div><div class="sub">Makin sejajar dengan cahaya, makin besar</div></div>
       <div><div class="sub">Energi estimasi</div><div><span class="big" id="ewh">–</span><span class="unit">Wh</span></div><div class="sub">Terkumpul sejak ESP32 menyala</div></div>
     </div>
-    <div class="hint">⚠ Ini ESTIMASI dari sensor cahaya (LDR) = daya puncak panel × cahaya × keselarasan, bukan hasil pengukuran tegangan/arus panel.</div>
+    <div class="cal">
+      <span>Kalibrasi dengan multimeter:</span>
+      <label>daya terukur <input id="calMeasured" type="number" step="0.01" min="0" placeholder="mis. 4.0"> W</label>
+      <button id="btnCal" class="primary">Kalibrasi sekarang</button>
+      <button id="btnCalReset">Reset</button>
+    </div>
+    <div class="hint" id="calInfo">Belum dikalibrasi (faktor ×1,00).</div>
+    <div class="hint">⚠ ESTIMASI dari sensor cahaya (LDR) = daya puncak × cahaya × keselarasan × faktor kalibrasi. Bukan hasil pengukuran langsung tegangan/arus panel.</div>
   </div>
 
   <div class="card wide">
@@ -316,10 +327,12 @@
     maybeSave(d);
     $("light").textContent = d.light; $("b_light").style.width = d.light + "%";
     if (typeof d.pest === "number") {
-      $("pest").textContent = d.pest.toFixed(2); $("pmax").textContent = "dari puncak " + d.wp + " W";
-      $("b_pest").style.width = Math.min(100, d.wp > 0 ? d.pest / d.wp * 100 : 0) + "%";
+      recentRaw.push(d.pest); if (recentRaw.length > 6) recentRaw.shift();
+      const k = kf(), pc = d.pest * k, pk = d.wp * k;
+      $("pest").textContent = pc.toFixed(2); $("pmax").textContent = "dari puncak " + pk.toFixed(1) + " W" + (k !== 1 ? " (terkalibrasi)" : "");
+      $("b_pest").style.width = Math.min(100, pk > 0 ? pc / pk * 100 : 0) + "%";
       $("align").textContent = d.align; $("b_align").style.width = d.align + "%";
-      $("ewh").textContent = d.ewh.toFixed(3);
+      $("ewh").textContent = (d.ewh * k).toFixed(3);
     }
     $("status2").textContent = d.status;
     $("status2").style.color = d.status === "Seimbang" ? "var(--accent)" : "var(--warn)";
@@ -333,10 +346,42 @@
     renderControl();
     chart.data.labels.push(new Date(lastTs).toLocaleTimeString("id-ID"));
     chart.data.datasets[0].data.push(d.light);
-    chart.data.datasets[1].data.push(typeof d.pest === "number" ? d.pest : null);
+    chart.data.datasets[1].data.push(typeof d.pest === "number" ? d.pest * kf() : null);
     if (chart.data.labels.length > 40) { chart.data.labels.shift(); chart.data.datasets.forEach((ds) => ds.data.shift()); }
     chart.update();
   });
+
+  // ================== KALIBRASI DAYA DENGAN MULTIMETER ==================
+  // Estimasi mentah dari ESP32 dikalikan faktor = daya terukur multimeter / estimasi mentah (saat kalibrasi).
+  // Faktor disimpan di Firebase (solar/calibration) sehingga semua perangkat memakai angka yang sama.
+  let calib = { factor: 1, measured: null, raw: null, ts: null };
+  const recentRaw = [];
+  const kf = () => (typeof calib.factor === "number" && calib.factor > 0 ? calib.factor : 1);
+  const calRef = ref(db, "solar/calibration");
+  function renderCalib() {
+    const k = kf();
+    $("powTitle").textContent = k !== 1 ? "Estimasi Daya Masuk (terkalibrasi multimeter)" : "Estimasi Daya Masuk dari Panel Surya";
+    $("calInfo").textContent = k === 1 ? "Belum dikalibrasi (faktor ×1,00)."
+      : `Faktor kalibrasi ×${k.toFixed(2).replace(".", ",")} — diukur ${Number(calib.measured).toFixed(2)} W saat estimasi mentah ${Number(calib.raw).toFixed(2)} W` +
+        (calib.ts ? " (" + new Date(calib.ts).toLocaleString("id-ID") + ")" : "") + ".";
+    if (live && typeof live.pest === "number") {      // segarkan angka di layar
+      const pc = live.pest * k, pk = live.wp * k;
+      $("pest").textContent = pc.toFixed(2); $("pmax").textContent = "dari puncak " + pk.toFixed(1) + " W" + (k !== 1 ? " (terkalibrasi)" : "");
+      $("b_pest").style.width = Math.min(100, pk > 0 ? pc / pk * 100 : 0) + "%"; $("ewh").textContent = (live.ewh * k).toFixed(3);
+    }
+    if (typeof renderHistory === "function") renderHistory();
+  }
+  onValue(calRef, (snap) => { const v = snap.val(); calib = v && typeof v.factor === "number" ? v : { factor: 1, measured: null, raw: null, ts: null }; renderCalib(); });
+  $("btnCal").onclick = () => {
+    const measured = parseFloat($("calMeasured").value);
+    if (!(measured > 0)) { alert("Isi daya terukur multimeter (W), misalnya 4.0"); return; }
+    if (recentRaw.length < 3) { alert("Data ESP32 belum cukup. Tunggu beberapa detik sampai status ONLINE lalu coba lagi."); return; }
+    const raw = recentRaw.reduce((a, b) => a + b, 0) / recentRaw.length;
+    if (raw < 0.05) { alert("Estimasi mentah terlalu kecil (cahaya redup). Kalibrasi saat panel/sensor terkena cahaya terang, bersamaan dengan pengukuran multimeter."); return; }
+    const factor = Math.min(20, Math.max(0.2, measured / raw));
+    set(calRef, { factor, measured, raw, ts: Date.now() }).catch((e) => alert("Gagal menyimpan kalibrasi: " + e.message));
+  };
+  $("btnCalReset").onclick = () => { if (confirm("Kembalikan faktor kalibrasi ke ×1,00?")) set(calRef, { factor: 1, measured: null, raw: null, ts: Date.now() }); };
 
   // ================== RIWAYAT PENGUKURAN (Firebase: solar/history) ==================
   // Catatan: riwayat ditulis oleh website ini saat terbuka (ESP32 tidak diubah).
@@ -399,7 +444,8 @@
 
   const f1 = (v, n = 1) => (typeof v === "number" ? v.toFixed(n) : "–");
   function renderHistory() {
-    const r = histRecords, n = r.length;
+    const kcal = kf();
+    const r = histRecords.map((x) => (typeof x.pest === "number" ? Object.assign({}, x, { pest: x.pest * kcal }) : x)), n = r.length;
     $("hCount").textContent = n;
     if (!n) {
       ["hLight", "hAvgP", "hMaxP", "hEnergy"].forEach((id) => ($(id).textContent = "–"));
@@ -432,8 +478,15 @@
 
   $("btnCsv").onclick = () => {
     if (!histRecords.length) { alert("Belum ada data untuk diunduh."); return; }
-    const cols = ["ts", "waktu", "light", "align", "pest", "ewh", "az", "el", "mode", "status", "tl", "tr", "bl", "br", "rssi"];
-    const rows = histRecords.map((x) => cols.map((c) => (c === "waktu" ? new Date(x.ts).toISOString() : (x[c] ?? ""))).join(","));
+    const cols = ["ts", "waktu", "light", "align", "pest_mentah", "pest_terkalibrasi", "faktor", "ewh_mentah", "az", "el", "mode", "status", "tl", "tr", "bl", "br", "rssi"];
+    const rows = histRecords.map((x) => cols.map((c) => {
+      if (c === "waktu") return new Date(x.ts).toISOString();
+      if (c === "pest_mentah") return x.pest ?? "";
+      if (c === "pest_terkalibrasi") return typeof x.pest === "number" ? (x.pest * kf()).toFixed(3) : "";
+      if (c === "faktor") return kf().toFixed(3);
+      if (c === "ewh_mentah") return x.ewh ?? "";
+      return x[c] ?? "";
+    }).join(","));
     const blob = new Blob([cols.join(",") + "\n" + rows.join("\n")], { type: "text/csv" });
     const a = document.createElement("a"); a.href = URL.createObjectURL(blob);
     a.download = "riwayat_solar_tracker.csv"; document.body.appendChild(a); a.click(); a.remove();
